@@ -26,7 +26,8 @@ sleep 10s
 # delete existing stack (if any)
 echo 'deleting stack...'
 aws cloudformation --profile $PROFILE --region $REGION delete-stack --stack-name $STACK_NAME
-sleep 10s
+# wait for 3 minutes for the stack removal
+sleep 180s
 
 # create a new stack
 echo 'creating stack...'
