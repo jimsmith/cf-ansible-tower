@@ -1,4 +1,4 @@
-# Installation Guide: Ansible Tower Install (3.1.5)
+# Installation Guide: Ansible Tower Install (3.2.0)
 
 Author: Ritesh Patel | Last Updated: Oct 09, 2017
 
