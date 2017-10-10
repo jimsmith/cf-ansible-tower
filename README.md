@@ -42,7 +42,7 @@ __Parameters__
 | pApplicationName | Ansible Tower |
 | pEC2AvailabilityZoneTarget | us-east-1a (replace with region of your choice) |
 | pEC2InstanceType | m4.large |
-| pEC2Keypair | keypair.pem |
+| pKeypair | keypair.pem |
 | pServerAMI | ami-c998b6b2 |
 | pAnsibleSubnet | subnet-5c3f702b (must be replaced) |
 | pAnsibleVPC | vpc-84b702fd (must be replaced) |
