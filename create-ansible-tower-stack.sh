@@ -1,8 +1,7 @@
 #!/bin/sh
 
 ################################################################################
-# Script for testing ansible tower stack. It creates all required resources for
-# Ansible Tower.
+# Script for testing ansible tower stack. It validates, removes an existing stack and creates a new Ansible Tower Stack.
 # Usage: ./create-ansible-tower-stack.sh --capabilities CAPABILITY_NAMED_IAM
 # @author ritesh patel
 # @email ritesh@line89.com
