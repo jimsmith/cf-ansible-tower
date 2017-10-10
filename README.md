@@ -92,7 +92,7 @@ The following table lists the known resource types and identifiers created durin
 
 ### Wait conditions
 
-This template creates one wait condition to track the completion of rAnsibleTower instance. Wait condition has a 20 minutes of timeout. In the event of a successful completion the wait condition receives a signal and marks the resource creation as complete else the entire stack is rolled back after 20 minutes.
+This template creates one wait condition to track the completion of rAnsibleTower instance. Wait condition has a 30 minutes of timeout. In the event of a successful completion the wait condition receives a signal and marks the resource creation as complete else the entire stack is rolled back after 30 minutes.
 
 ### Required Ports and Protocols
 
