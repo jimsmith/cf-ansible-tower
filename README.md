@@ -61,7 +61,7 @@ __Parameters__
 | pRabbitMQCookie | cookiemonster |
 | pAnsibleTowerPassword | (check template) |
 | pRoleName | prd-ansible-tower-role |
-| pTagProductOwner | Arpit Shah |
+| pTagProductOwner | Ritesh Patel |
 | pCloudWatchActionsPolicy | | |  |
 | pTagTechnicalContact | Ritesh Patel |
 | pUniqueTimestampHash | 123456789 |
