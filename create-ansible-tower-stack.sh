@@ -4,6 +4,9 @@
 # Script for testing ansible tower stack. It creates all required resources for
 # Ansible Tower.
 # Usage: ./create-ansible-tower-stack.sh --capabilities CAPABILITY_NAMED_IAM
+# @author ritesh patel
+# @email ritesh@line89.com
+# @date 10/09/2017
 ################################################################################
 # AWS profile from .credentials
 PROFILE='raptest'
