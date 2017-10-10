@@ -1,0 +1,760 @@
+##############################################################
+# @description - This CloudFormation template creates an Ansible Tower Stack
+# @author - ritesh patel
+# @email - ritesh@line89.com
+# @date - 10/05/2017
+# Note: Template assumes, VPC, Subnets & RDS Subnet groups have been created beforehand.
+#       Additionally, this template creates Security Groups, Load Balancers, Instance Profile & Sets up
+#       CloudWatch monitoring.
+##############################################################
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates a stack equipped with Ansible Tower
+Metadata:
+  Stack:
+    Value: '0'
+  VersionDate:
+    Value: '20160510'
+  Identifier:
+    Value: ansible-tower-server
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      # Application parameters
+      - Label:
+          default: Application Overview
+        Parameters:
+        - pApplicationName
+        - pApplicationIdentifier
+        - pEnvironment
+        - pTagTechnicalContact
+      # Network parameters
+      - Label:
+          default: Network Configurations
+        Parameters:
+        - pVPCTenancy
+        - pAnsibleVPC
+        - pAnsibleSubnet
+        - pAnsibleAvailabilityZone
+      # Server configurations parameters
+      - Label:
+          default: Server Instance Configurations
+        Parameters:
+        - pAnsibleInstanceType
+        - pServerAMI
+        - pKeypair
+      # Database parameters
+      - Label:
+          default: RDS Database Configurations
+        Parameters:
+        - pDatabaseAvailabilityZone
+        - pDatabaseInstanceClass
+        - pDatabaseAdmin
+        - pDatabasePassword
+        - pDatabaseName
+        - pDatabasePort
+        - pDatabaseSubnetGroupName
+      # RabbitMQ cluster parameters
+      - Label:
+          default: RabbitMQ Configurations
+        Parameters:
+        - pRabbitMQPort
+        - pRabbitMQVHost
+        - pRabbitMQUserName
+        - pRabbitMQPassword
+        - pRabbitMQCookie
+      # IAM Role parameters
+      - Label:
+          default: IAM Ansible Tower Role Configurations
+        Parameters:
+        - pRoleName
+        - pCloudWatchActionsPolicy
+        - pCloudWatchLogsPolicy
+        - pCloudWatchEventsPolicy
+        - pInstanceProfileName
+      - Label:
+          default: Ansible Tower UI Configurations
+        Parameters:
+        - pAnsibleTowerPassword
+    # Parameter labels to be displayed to the user
+    ParameterLabels:
+      pVPCTenancy:
+        default: Instance tenancy
+      pApplicationName:
+        default: Application name
+      pApplicationIdentifier:
+        default: Application identifier (e.g. ansible-tower)
+      pEnvironment:
+        default: >-
+          The type of environment this application supports (development,
+          staging, production, other).
+      pTagTechnicalContact:
+        default: Technical contact for this template
+      pAnsibleVPC:
+        default: Target VPC to launch resources into (defaults to Production)
+      pAnsibleSubnet:
+        default: Target subnet to launch resources into
+      pAnsibleAvailabilityZone:
+        default: Target availability to launch resources into
+      pAnsibleInstanceType:
+        default: Application server instance type
+      pServerAMI:
+        default: Application server AMI
+      pKeypair:
+        default: EC2 Keypair to attach to the underlying instance for SSH access.
+      pDatabaseAvailabilityZone:
+        default: The Availability Zone of the RDS instance
+      pDatabaseInstanceClass:
+        default: The instance class of the RDS instance
+      pDatabaseAdmin:
+        default: The database username used for the application
+      pDatabasePassword:
+        default: The database password used for the application
+      pDatabaseName:
+        default: The database name used for the primary PostgreSQL database instance.
+      pDatabasePort:
+        default: The database port
+      pDatabaseSubnetGroupName:
+        default: The database subnet group name
+      pRabbitMQPort:
+        default: Rabbit MQ cluster port
+      pRabbitMQVHost:
+        default: Rabbit MQ virtual host
+      pRabbitMQUserName:
+        default: Rabbit MQ cluster user
+      pRabbitMQPassword:
+        default: Rabbit MQ cluster password
+      pRabbitMQCookie:
+        default: Rabbit MQ cluster cookie
+      pAnsibleTowerPassword:
+        default: Ansible tower admin account password
+      pRoleName:
+        default: Role name for IAM instance profile
+      pCloudWatchActionsPolicy:
+        default: Cloud watch actions for EC2 instance
+      pCloudWatchLogsPolicy:
+        default: Cloud watch logs for EC2 instance
+      pCloudWatchEventsPolicy:
+        default: Cloud watch events for EC2 instance
+      pInstanceProfileName:
+        default: IAM Instance Profile name for Ansible Tower
+      pCloudWatchInlinePolicyName:
+        default: CloudWatch Metric Inline Policy Name
+  Input:
+    Description: Optional paramaters for network deployment and database connectivity (VPC, subnet, etc)
+  Output:
+    Description: Outputs IDs and endpoints of all deployed resources
+# Mappings
+Mappings:
+  RegionSupportMap:
+    us-east-1:
+      ConfigRules: true
+      NatGateway: true
+      Glacier: true
+    us-east-2:
+      ConfigRules: true
+      NatGateway: true
+      Glacier: true
+    us-west-1:
+      ConfigRules: true
+      NatGateway: true
+      Glacier: true
+    us-west-2:
+      ConfigRules: true
+      NatGateway: true
+      Glacier: true
+  RegionAMIMap:
+    AMI:
+      AMZNLINUXHVM: RHEL-7.4_HVM_GA-20170808-x86_64-2-Hourly2-GP2
+    us-east-1:
+      AMZNLINUXHVM: ami-c998b6b2
+      InstanceType: t2.medium
+      InstanceTypeDatabase: db.t2.medium
+    us-east-2:
+      AMZNLINUXHVM: ami-cfdafaaa
+      InstanceType: t2.medium
+      InstanceTypeDatabase: db.t2.medium
+    us-west-1:
+      AMZNLINUXHVM: ami-1fbe067e
+      InstanceType: t2.medium
+      InstanceTypeDatabase: db.t2.medium
+    us-west-2:
+      AMZNLINUXHVM: ami-9fa343e7
+      InstanceType: t2.medium
+      InstanceTypeDatabase: db.t2.medium
+  RegionARNPartitionMap:
+    aws-standard:
+      ARN: 'arn:aws'
+# Template conditions
+Conditions:
+  cLaunchAsDedicatedInstance:
+    !Equals
+    - !Ref pVPCTenancy
+    - dedicated
+# Parameter definitions with default values (if any)
+Parameters:
+  pVPCTenancy:
+    Description: Instance tenancy behavior for this VPC
+    Type: String
+    Default: default
+    AllowedValues:
+      - default
+      - dedicated
+  pApplicationName:
+    Type: String
+    Default: PRD-AnsibleTower-AZa
+  pApplicationIdentifier:
+    Type: String
+    Default: ansibletower
+  pUniqueTimestampHash:
+    Type: String
+    Default: 1234567890
+  pEnvironment:
+    Description: >-
+      The type of environment this application supports (development, staging,
+      production, other).
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - production
+  pTagTechnicalContact:
+    Description: 'Tag for technical contact'
+    Type: String
+    Default: Ritesh Patel
+  pAnsibleVPC:
+    Description: VPC Target ID
+    Type: 'AWS::EC2::VPC::Id'
+    Default: vpc-84b702fd
+  pAnsibleSubnet:
+    Description: Target subnet to launch Ansible Tower into
+    Type: 'AWS::EC2::Subnet::Id'
+    Default: subnet-c5006c8d
+  pAnsibleAvailabilityZone:
+    Description: Target availability zone to launch Ansible Tower into
+    Type: 'AWS::EC2::AvailabilityZone::Name'
+    Default: us-east-1a
+  pAnsibleInstanceType:
+    Description: AWS instance type to launch Ansible Tower on.
+    Type: String
+    Default: m4.large
+    AllowedValues:
+      - t2.medium
+      - t2.large
+      - t2.xlarge
+      - t2.2xlarge
+      - m4.medium
+      - m4.large
+      - m4.xlarge
+      - m4.2xlarge
+  pInstanceRootVolSize:
+    Description: The size of the root volume attached to the EC2 instance
+    Type: String
+    Default: 50
+    AllowedValues:
+      - 10
+      - 25
+      - 50
+      - 100
+  pServerAMI:
+    Description: Server AMI to launch the instance from.
+    Type: String
+    # RHEL 7 AMI us-east-1
+    Default: ami-c998b6b2
+  pKeypair:
+    Description: EC2 Keypair to attach to the underlying instance for SSH access.
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    MinLength: '1'
+    MaxLength: '64'
+    Default: rap-devops
+  pDatabaseAvailabilityZone:
+    Description: The Availability Zone of the RDS instance
+    Type: 'AWS::EC2::AvailabilityZone::Name'
+    Default: us-east-1a
+  pDatabaseInstanceClass:
+    Description: The instance class of the RDS instance
+    Type: String
+    Default: db.m4.large
+    AllowedValues:
+      - db.m4.large
+      - db.m4.xlarge
+      - db.m4.2xlarge
+      - db.m4.4xlarge
+      - db.m4.10xlarge
+  pDatabaseAdmin:
+    Description: The database username used for the application
+    Type: String
+    Default: ansibleAppDBAdmin
+  pDatabasePassword:
+    Description: The database password used for the application
+    Type: String
+    Default: PwD4An$!bleT0wer
+  pDatabaseName:
+    Description: The database name used for the application
+    Type: String
+    Default: ansibletowerdb
+  pDatabasePort:
+    Description: The database port
+    Type: String
+    Default: '5432'
+  pDatabaseSubnetGroupName:
+    Description: The RDS database subnet group name
+    Type: String
+    Default: rds-subnet-group
+  pRabbitMQPort:
+    Description: Rabbit MQ cluster port
+    Type: String
+    Default: '5672'
+  pRabbitMQVHost:
+    Description: Rabbit MQ Virtual Host
+    Type: String
+    Default: tower
+  pRabbitMQUserName:
+    Description: Rabbit MQ Cluster User
+    Type: String
+    Default: tower
+  pRabbitMQPassword:
+    Description: Rabbit MQ Cluster password
+    Type: String
+    Default: password
+  pRabbitMQCookie:
+    Description: Rabbit MQ cookie
+    Type: String
+    Default: cookiemonster
+  pAnsibleTowerPassword:
+    Description: Ansible Tower admin account password
+    Type: String
+    Default: Pwd4AnsibleTower
+  pRoleName:
+    Description: Role name for the instance profile
+    Type: String
+    Default: prd-ansible-tower-role
+  pCloudWatchInlinePolicyName:
+    Type: String
+    Default: prd-inline-policy-ansible-tower
+  pCloudWatchActionsPolicy:
+    Description: Cloud watch actions for EC2 instance
+    Type: String
+    Default: arn:aws:iam::aws:policy/CloudWatchActionsEC2Access
+  pCloudWatchLogsPolicy:
+    Description: Cloud watch logs for EC2 instance
+    Type: String
+    Default: arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+  pCloudWatchEventsPolicy:
+    Description: Cloud watch events for EC2 instance
+    Type: String
+    Default: arn:aws:iam::aws:policy/CloudWatchEventsFullAccess
+  pInstanceProfileName:
+    Description: IAM Instance Profile name for Ansible Tower
+    Type: String
+    Default: prd-instance-profile-ansible-tower
+# Template resources
+Resources:
+  # IAM Role with CloudWatch policies attached
+  rIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref pRoleName
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+      Policies:
+      - PolicyName: !Ref pCloudWatchInlinePolicyName
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: 'cloudwatch:PutMetricData'
+              Resource: '*'
+      ManagedPolicyArns:
+      - !Ref pCloudWatchActionsPolicy
+      - !Ref pCloudWatchLogsPolicy
+      - !Ref pCloudWatchEventsPolicy
+  # IAM Instance Profile
+  rIAMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      InstanceProfileName: !Ref pInstanceProfileName
+      Roles:
+      - !Ref pRoleName
+    DependsOn: rIAMRole
+  # Load Balancer Security Group
+  rELBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Join
+        - "-"
+        - - 'prd-ansible-tower-elb-sg'
+          - !Ref pUniqueTimestampHash
+      GroupDescription: 'Port access rules for the Ansible Tower Elastic LoadBalancer'
+      SecurityGroupIngress:
+        - FromPort: 80
+          ToPort: 80
+          IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref pAnsibleVPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ' '
+            - - !Ref pApplicationName
+              - 'ELB'
+        - Key: Environment
+          Value: !Ref pEnvironment
+  # Ansible Instance Security Group
+  rAnsibleSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Join
+        - "-"
+        - - 'prd-ansible-tower-sg'
+          - !Ref pUniqueTimestampHash
+      GroupDescription: 'Port access rules for the Ansible Tower EC2 Instance'
+      SecurityGroupIngress:
+        - FromPort: 80
+          ToPort: 80
+          IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+        - FromPort: 80
+          ToPort: 80
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref rELBSecurityGroup
+      VpcId: !Ref pAnsibleVPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ' '
+            - - !Ref pApplicationName
+              - 'EC2'
+        - Key: Environment
+          Value: !Ref pEnvironment
+  # Ansible Tower Instance resource
+  rAnsibleTower:
+    Type: AWS::EC2::Instance
+    DependsOn: rRDSAnsibleTower
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          bootstrap:
+            - install-cfn
+            - security-updates
+            - perl-installation
+            - psql-tools-installation
+            - mount-ebs
+            - cloudwatch-monitoring-init
+            - install-ansible-engine
+            - get-tower
+            - create-inventory
+            - replace-inventory
+            - modify-hosts
+            - install-tower
+        install-cfn:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack= ${AWS::StackName}
+                region=${AWS::Region}
+              group: root
+              mode: '000400'
+              owner: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.rAnsibleTower.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource rAnsibleTower --configsets bootstrap --url https://stackbuilder.amazonaws.com
+              group: root
+              mode: '000400'
+              owner: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                - /etc/cfn/cfn-hup.conf
+                - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+        security-updates:
+          commands:
+            1-yum-updates:
+              command: sudo yum update --security -y
+        perl-installation:
+          packages:
+            yum:
+              perl-DateTime: []
+              perl-Sys-Syslog: []
+              perl-LWP-Protocol-https: []
+        psql-tools-installation:
+          packages:
+            yum:
+              postgresql.i686: []
+              postgresql-devel.i686: []
+              postgresql-libs.i686: []
+        mount-ebs:
+          commands:
+            mount1:
+              command: mkfs -t ext4 /dev/xvdf
+            mount2:
+              command: mkdir /ansibletower
+            mount3:
+              command: mount /dev/xvdf /ansibletower
+            mount4:
+              command: >-
+                echo "/dev/xvdf      /ansibletower   ext4    defaults,nofail        0       2"
+                >> /etc/fstab
+            pause-after-mount:
+              command: sleep 15s
+        install-ansible-engine:
+          commands:
+            0-install-pip:
+              command: sudo easy_install pip
+            1-sleep:
+              command: sleep 10s
+            2-install-ansible:
+              command: sudo pip install ansible
+            3-sleep:
+              command: sleep 10s
+            4-print-ansible-version:
+              command: ansible --version
+            5-pause-after-ansible-engine:
+              command: sleep 10s
+        get-tower:
+          commands:
+            1-download-tower:
+              command: sudo wget https://releases.ansible.com/ansible-tower/setup/ansible-tower-setup-latest.tar.gz
+              cwd: "/tmp"
+            2-extract-tower:
+              command: tar xvzf ansible-tower-setup-latest.tar.gz
+              cwd: "/tmp"
+            3-pause-after-tower-extract:
+              command: sleep 15s
+        cloudwatch-monitoring-init:
+          commands:
+            0-install-wget:
+              command: sudo yum -y install wget
+            1-CloudWatchScriptDownload:
+              command: >-
+                wget -O /tmp/cloudwatch-monitoring.zip
+                https://ec2-downloads.s3.amazonaws.com/cloudwatch-samples/CloudWatchMonitoringScripts-v1.1.0.zip
+            2-install-unzip:
+              command: sudo yum -y install unzip
+            3-CloudWatchScriptExtration:
+              command: unzip /tmp/cloudwatch-monitoring.zip -d /tmp/
+            4-CronPatternDefinition:
+              command: >-
+                echo '*/5 * * * * /tmp/aws-scripts-mon/mon-put-instance-data.pl
+                --mem-used --mem-avail --swap-used --disk-space-util
+                --disk-space-used --disk-space-avail --disk-path=/
+                --disk-path=/ansibletower'  >>/etc/cron.cloudwatch
+            5-CronTabIntegration:
+              command: crontab /etc/cron.cloudwatch
+        create-inventory:
+          files:
+            /tmp/inventory:
+              content: !Sub |
+                [tower]
+                localhost ansible_connection=local
+                [database]
+                [all:vars]
+                ansible_become=true
+                admin_password=${pAnsibleTowerPassword}
+                pg_host=${rRDSAnsibleTower.Endpoint.Address}
+                pg_port=${pDatabasePort}
+                pg_database=${pDatabaseName}
+                pg_username=${pDatabaseAdmin}
+                pg_password=${pDatabasePassword}
+                rabbitmq_port=${pRabbitMQPort}
+                rabbitmq_vhost=${pRabbitMQVHost}
+                rabbitmq_username=${pRabbitMQUserName}
+                rabbitmq_password=${pRabbitMQPassword}
+                rabbitmq_cookie=${pRabbitMQCookie}
+                rabbitmq_use_long_name=false
+              mode: '000644'
+              owner: root
+              group: root
+          DependsOn: rRDSAnsibleTower
+        replace-inventory:
+          commands:
+            0-copy-inventory:
+              command: cp /tmp/inventory /tmp/ansible-tower-setup*/inventory
+          DependsOn: rRDSAnsibleTower
+        modify-hosts:
+          files:
+            /etc/ansible/hosts:
+              content: !Sub |
+                [localhost]
+                127.0.0.1
+        install-tower:
+          commands:
+            0-move-source-dir:
+              command: cd /tmp/ansible-tower-setup*
+            1-release-min-var-requirements:
+              command: sed -i -e "s/10000000000/100000000/" /tmp/ansible-tower-setup*/roles/preflight/defaults/main.yml
+            2-allow-sudo:
+              command: sed -i -e "s/Defaults    requiretty/Defaults    \!requiretty/" /etc/sudoers
+            3-pause-before-tower-install:
+              command: sleep 120s
+            4-install-tower:
+              command: sh /tmp/ansible-tower-setup-*/setup.sh -e "nginx_disable_https=true"
+          DependsOn: rRDSAnsibleTower
+          services:
+            sysvinit:
+              nginx:
+                enabled: true
+                ensureRunning: true
+    Properties:
+      BlockDeviceMappings:
+      - DeviceName: "/dev/xvdf"
+        Ebs:
+          VolumeSize: !Ref pInstanceRootVolSize
+          VolumeType: 'gp2'
+      IamInstanceProfile: !Ref rIAMInstanceProfile
+      ImageId: !Ref pServerAMI
+      InstanceInitiatedShutdownBehavior: stop
+      InstanceType: !Ref pAnsibleInstanceType
+      KeyName: !Ref pKeypair
+      Monitoring: true
+      SubnetId: !Ref pAnsibleSubnet
+      SecurityGroupIds:
+        - !Ref rAnsibleSecurityGroup
+        - !Ref rELBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Ref pApplicationName
+        - Key: Environment
+          Value: !Ref pEnvironment
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          # Version 1.0
+          # All yum repository scripts require access to the internet via an IGW or NAT.
+          rpm -Uvh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+          yum install -y python-pip
+
+          # Install the files and packages from the metadata
+          /bin/easy_install --script-dir /opt/aws/bin https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+          >- cp -f `pip show aws-cfn-bootstrap 2>/dev/null|grep -E "^Location"|awk -F: '{print $2}'`/init/redhat/cfn-hup /etc/init.d/
+          chmod 755 /etc/init.d/cfn-hup
+          chkconfig --add cfn-hup
+          yum update -y aws-cfn-bootstrap
+          # Install the files and packages from the metadata
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource rAnsibleTower --configsets bootstrap --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? '${towerWaitHandle}'
+  # WaitHandle & WaitCondition
+  towerWaitHandle:
+    Type: AWS::CloudFormation::WaitConditionHandle
+  cfnWaitCondition:
+    Type: AWS::CloudFormation::WaitCondition
+    DependsOn: rAnsibleTower
+    Properties:
+      Handle: !Ref towerWaitHandle
+      Timeout: '1800'
+  # Ansible Tower elastic IP address
+  rAnsibleEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref rAnsibleTower
+      Domain: vpc
+  rELBAnsibleTower:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      ConnectionDrainingPolicy:
+        Enabled: true
+        Timeout: 60
+      ConnectionSettings:
+        IdleTimeout: 60
+      CrossZone: true
+      Listeners:
+        - LoadBalancerPort: 80
+          Protocol: TCP
+          InstancePort: 80
+          InstanceProtocol: TCP
+      HealthCheck:
+        Target: TCP:80
+        HealthyThreshold: 5
+        UnhealthyThreshold: 2
+        Interval: 10
+        Timeout: 5
+      Scheme: internet-facing
+      Instances:
+        - !Ref rAnsibleTower
+      SecurityGroups:
+        - !Ref rELBSecurityGroup
+      Subnets:
+        - !Ref pAnsibleSubnet
+      Tags:
+        - Key: Environment
+          Value: !Ref pEnvironment
+  # Database security group
+  rDatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "-"
+      SecurityGroupIngress:
+        - FromPort: !Ref pDatabasePort
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref rAnsibleSecurityGroup
+          ToPort: !Ref pDatabasePort
+        - FromPort: !Ref pDatabasePort
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref rELBSecurityGroup
+          ToPort: !Ref pDatabasePort
+      VpcId: !Ref pAnsibleVPC
+  # RDS instance
+  rRDSAnsibleTower:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: '100'
+      AllowMajorVersionUpgrade: 'false'
+      AutoMinorVersionUpgrade: 'true'
+      AvailabilityZone: !Ref pDatabaseAvailabilityZone
+      BackupRetentionPeriod: '30'
+      CopyTagsToSnapshot: true
+      DBInstanceClass: !Ref pDatabaseInstanceClass
+      DBInstanceIdentifier: !Ref pApplicationIdentifier
+      DBName: !Ref pDatabaseName
+      DBParameterGroupName: default.postgres9.5
+      DBSubnetGroupName: !Ref pDatabaseSubnetGroupName
+      Engine: postgres
+      EngineVersion: 9.5.4
+      LicenseModel: postgresql-license
+      MasterUsername: !Ref pDatabaseAdmin
+      MasterUserPassword: !Ref pDatabasePassword
+      MonitoringInterval: 0
+      MultiAZ: 'false'
+      OptionGroupName: default:postgres-9-5
+      Port: !Ref pDatabasePort
+      PreferredBackupWindow: 22:00-00:00
+      PreferredMaintenanceWindow: mon:01:00-mon:03:00
+      PubliclyAccessible: 'false'
+      StorageEncrypted: 'true'
+      StorageType: standard
+      Tags:
+        - Key: Name
+          Value: ansible-tower-db
+      VPCSecurityGroups:
+        - !Ref rDatabaseSecurityGroup
+    DeletionPolicy: Snapshot
+# Output(s) from template execution
+Outputs:
+  rAnsibleTower:
+    Value: !Ref rAnsibleTower
+  rAnsibleEIP:
+    Value: !Ref rAnsibleEIP
+  rELBAnsibleTower:
+    Value: !Ref rELBAnsibleTower
+  rELBAnsibleTowerDNS:
+    Value: !GetAtt
+      - rELBAnsibleTower
+      - DNSName
+  rRDSEndPoint:
+    Value: !GetAtt
+      - rRDSAnsibleTower
+      - Endpoint.Address
